@@ -305,6 +305,36 @@ config INPUT_IQS9151_2F_PINCH_WHEEL_GAIN_X10
       Gain for 2F pinch REL_WHEEL output inside the driver.
       10 = 1.0x, 20 = 2.0x, 5 = 0.5x.
 
+config INPUT_IQS9151_2F_SWIPE_X_ENABLE
+    bool "IQS9151 two-finger horizontal swipe enable"
+    default n
+    help
+      Enable driver-side two-finger horizontal swipe detection.
+      Emits INPUT_BTN_3 (right swipe) or INPUT_BTN_4 (left swipe) —
+      same codes as three-finger horizontal swipe — so existing
+      keymap bindings work without modification.
+      Coexists with scroll: when movement is clearly horizontal, scroll
+      is deferred for up to DETECT_WINDOW_MS to allow swipe detection.
+
+config INPUT_IQS9151_2F_SWIPE_X_THRESHOLD
+    int "IQS9151 two-finger horizontal swipe threshold"
+    range 50 2000
+    default 400
+    depends on INPUT_IQS9151_2F_SWIPE_X_ENABLE
+    help
+      Minimum cumulative horizontal centroid displacement (raw counts)
+      required to confirm a 2-finger horizontal swipe gesture.
+      Increase to require a larger gesture; decrease for higher sensitivity.
+
+config INPUT_IQS9151_2F_SWIPE_X_DETECT_WINDOW_MS
+    int "IQS9151 two-finger swipe detection window (ms)"
+    range 50 1000
+    default 300
+    depends on INPUT_IQS9151_2F_SWIPE_X_ENABLE
+    help
+      Time window (ms) during which horizontal scroll is deferred to
+      allow swipe detection. After this timeout, normal scroll resumes.
+
 config INPUT_IQS9151_3F_TAP_ENABLE
     bool "IQS9151 three-finger tap enable"
     default y

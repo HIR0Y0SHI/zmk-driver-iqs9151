@@ -101,6 +101,7 @@ enum iqs9151_two_finger_mode {
     IQS9151_2F_MODE_NONE = 0,
     IQS9151_2F_MODE_SCROLL,
     IQS9151_2F_MODE_PINCH,
+    IQS9151_2F_MODE_SWIPE_X,
 };
 struct iqs9151_one_finger_state {
     bool active;
@@ -121,8 +122,10 @@ struct iqs9151_two_finger_state {
     bool hold_candidate;
     bool tapdrag_second_touch;
     bool release_pending;
+    bool swipe_x_pending;
     int64_t down_ms;
     int64_t release_pending_ms;
+    int64_t swipe_x_pending_ms;
     int32_t centroid_dx;
     int32_t centroid_dy;
     int32_t distance_delta;
@@ -1016,8 +1019,10 @@ static void iqs9151_two_finger_reset(struct iqs9151_two_finger_state *state) {
     state->hold_candidate = false;
     state->tapdrag_second_touch = false;
     state->release_pending = false;
+    state->swipe_x_pending = false;
     state->down_ms = 0;
     state->release_pending_ms = 0;
+    state->swipe_x_pending_ms = 0;
     state->centroid_dx = 0;
     state->centroid_dy = 0;
     state->distance_delta = 0;
@@ -1211,8 +1216,10 @@ static void iqs9151_two_finger_update(struct iqs9151_data *data,
         state->hold_candidate = tapdrag_second_touch;
         state->tapdrag_second_touch = tapdrag_second_touch;
         state->release_pending = false;
+        state->swipe_x_pending = false;
         state->down_ms = now_ms;
         state->release_pending_ms = 0;
+        state->swipe_x_pending_ms = 0;
         state->centroid_dx = 0;
         state->centroid_dy = 0;
         state->distance_delta = 0;
@@ -1279,11 +1286,42 @@ static void iqs9151_two_finger_update(struct iqs9151_data *data,
         }
 
         if (state->mode == IQS9151_2F_MODE_NONE) {
-            const int32_t abs_center =
-                MAX(iqs9151_abs32(state->centroid_dx), iqs9151_abs32(state->centroid_dy));
+            const int32_t abs_dx = iqs9151_abs32(state->centroid_dx);
+            const int32_t abs_dy = iqs9151_abs32(state->centroid_dy);
+            const int32_t abs_center = MAX(abs_dx, abs_dy);
             const int32_t abs_dist = iqs9151_abs32(state->distance_delta);
             const bool scroll_enabled = IS_ENABLED(CONFIG_INPUT_IQS9151_SCROLL_X_ENABLE) ||
                                         IS_ENABLED(CONFIG_INPUT_IQS9151_SCROLL_Y_ENABLE);
+
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_2F_SWIPE_X_ENABLE)
+            /* Horizontal swipe detection with deferred-scroll window:
+             * If movement is clearly horizontal, hold off scroll mode for up to
+             * DETECT_WINDOW_MS to see if it reaches the swipe threshold.
+             * On timeout, fall through to normal scroll. */
+            if (abs_dx > abs_dy * 2 && abs_center >= TWO_FINGER_SCROLL_START_MOVE) {
+                if (!state->swipe_x_pending) {
+                    state->swipe_x_pending = true;
+                    state->swipe_x_pending_ms = now_ms;
+                }
+                if (abs_dx >= CONFIG_INPUT_IQS9151_2F_SWIPE_X_THRESHOLD) {
+                    state->swipe_x_pending = false;
+                    state->tap_candidate = false;
+                    const uint16_t key =
+                        (state->centroid_dx < 0) ? INPUT_BTN_4 : INPUT_BTN_3;
+                    iqs9151_report_key_event(dev, key, 1, false, K_FOREVER);
+                    iqs9151_report_key_event(dev, key, 0, true, K_FOREVER);
+                    state->mode = IQS9151_2F_MODE_SWIPE_X;
+                    return;
+                }
+                if ((now_ms - state->swipe_x_pending_ms) <
+                        CONFIG_INPUT_IQS9151_2F_SWIPE_X_DETECT_WINDOW_MS) {
+                    return;
+                }
+                state->swipe_x_pending = false;
+            } else {
+                state->swipe_x_pending = false;
+            }
+#endif /* IS_ENABLED(CONFIG_INPUT_IQS9151_2F_SWIPE_X_ENABLE) */
 
             if (scroll_enabled && abs_center >= TWO_FINGER_SCROLL_START_MOVE) {
                 state->mode = IQS9151_2F_MODE_SCROLL;
