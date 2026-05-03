@@ -1307,7 +1307,7 @@ static void iqs9151_two_finger_update(struct iqs9151_data *data,
                     state->swipe_x_pending = false;
                     state->tap_candidate = false;
                     const uint16_t key =
-                        (state->centroid_dx < 0) ? INPUT_BTN_4 : INPUT_BTN_3;
+                       (state->centroid_dx < 0) ? INPUT_BTN_EXTRA : INPUT_BTN_SIDE;
                     iqs9151_report_key_event(dev, key, 1, false, K_FOREVER);
                     iqs9151_report_key_event(dev, key, 0, true, K_FOREVER);
                     state->mode = IQS9151_2F_MODE_SWIPE_X;
