@@ -1306,6 +1306,15 @@ static void iqs9151_two_finger_update(struct iqs9151_data *data,
                 if (abs_dx >= CONFIG_INPUT_IQS9151_2F_SWIPE_X_THRESHOLD) {
                     state->swipe_x_pending = false;
                     state->tap_candidate = false;
+
+                    /* Use 0x113/0x114: bypass tp_to_pos/layer lookup,
+                       * reported directly as HID MB4/MB5 (back/forward).
+                       * Zephyr v3.5.0 doesn't define these symbols. */
+                    #ifndef INPUT_BTN_SIDE
+                    #define INPUT_BTN_SIDE  0x113
+                    #define INPUT_BTN_EXTRA 0x114
+                    #endif
+                    
                     const uint16_t key =
                        (state->centroid_dx < 0) ? INPUT_BTN_EXTRA : INPUT_BTN_SIDE;
                     iqs9151_report_key_event(dev, key, 1, false, K_FOREVER);
