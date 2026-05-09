@@ -187,6 +187,14 @@ struct iqs9151_motion_history {
     uint8_t count;
 };
 
+struct iqs9151_tap_zone {
+    uint16_t x_min;
+    uint16_t x_max;
+    uint16_t y_min;
+    uint16_t y_max;
+    uint16_t button_code;
+};
+
 struct iqs9151_data {
     const struct device *dev;
     struct gpio_callback gpio_cb;
@@ -232,9 +240,15 @@ struct iqs9151_data {
     uint16_t three_last_x;
     uint16_t three_last_y;
     uint16_t hold_button;
+    uint16_t one_finger_hold_button;
     struct iqs9151_finger_history_entry finger_history[IQS9151_FINGER_HISTORY_SIZE];
     uint8_t finger_history_head;
     uint8_t finger_history_count;
+    const struct iqs9151_tap_zone *tap_zones;
+    size_t tap_zone_count;
+    uint16_t tap_anchor_x;
+    uint16_t tap_anchor_y;
+    bool tap_anchor_valid;
 };
 
 #ifdef CONFIG_INPUT_IQS9151_TEST
@@ -861,6 +875,7 @@ static void iqs9151_release_hold(struct iqs9151_data *data, const struct device 
 static void iqs9151_clear_one_finger_click_pending(struct iqs9151_data *data) {
     data->one_finger_click_pending = false;
     data->one_finger_click_pending_ms = 0;
+    data->one_finger_hold_button = 0U;
 }
 
 static void iqs9151_clear_two_finger_click_pending(struct iqs9151_data *data) {
@@ -929,6 +944,25 @@ static bool iqs9151_try_tap_hold_emit(struct iqs9151_data *data,
      */
     iqs9151_release_hold(data, dev);
     return false;
+}
+
+static uint16_t iqs9151_resolve_tap_button(const struct iqs9151_data *data) {
+#ifdef CONFIG_INPUT_IQS9151_TAP_ZONES
+    if (!data->tap_anchor_valid || data->tap_zone_count == 0U) {
+        return INPUT_BTN_0;
+    }
+    for (size_t i = 0; i < data->tap_zone_count; i++) {
+        const struct iqs9151_tap_zone *z = &data->tap_zones[i];
+
+        if (data->tap_anchor_x >= z->x_min && data->tap_anchor_x <= z->x_max &&
+            data->tap_anchor_y >= z->y_min && data->tap_anchor_y <= z->y_max) {
+            return z->button_code;
+        }
+    }
+#else
+    ARG_UNUSED(data);
+#endif
+    return INPUT_BTN_0;
 }
 
 static bool iqs9151_emit_click(struct iqs9151_data *data,
@@ -1063,7 +1097,8 @@ static bool iqs9151_one_finger_update(struct iqs9151_data *data,
 
             tapdrag_second_touch = (armed_elapsed_ms >= 0) &&
                                    (armed_elapsed_ms <= ONE_FINGER_CLICK_HOLD_MAX_MS);
-            if (!tapdrag_second_touch && data->hold_button == INPUT_BTN_0) {
+            if (!tapdrag_second_touch && data->one_finger_hold_button != 0U &&
+                data->hold_button == data->one_finger_hold_button) {
                 iqs9151_release_hold(data, dev);
             }
             iqs9151_clear_one_finger_click_pending(data);
@@ -1081,6 +1116,13 @@ static bool iqs9151_one_finger_update(struct iqs9151_data *data,
         state->dy = 0;
         state->last_x = x;
         state->last_y = y;
+        if (state->tap_candidate) {
+            data->tap_anchor_x = x;
+            data->tap_anchor_y = y;
+            data->tap_anchor_valid = true;
+        } else {
+            data->tap_anchor_valid = false;
+        }
     }
 
     if (!state->active) {
@@ -1141,16 +1183,22 @@ static bool iqs9151_one_finger_update(struct iqs9151_data *data,
         if (elapsed_ms <= ONE_FINGER_TAP_MAX_MS &&
             iqs9151_abs32(state->dx) <= ONE_FINGER_TAP_MOVE &&
             iqs9151_abs32(state->dy) <= ONE_FINGER_TAP_MOVE) {
+            const uint16_t resolved = iqs9151_resolve_tap_button(data);
+
             tap_detected = true;
             if (IS_ENABLED(CONFIG_INPUT_IQS9151_1F_PRESSHOLD_ENABLE)) {
-                tap_emitted = iqs9151_emit_hold_press(data, dev, INPUT_BTN_0);
+                tap_emitted = iqs9151_emit_hold_press(data, dev, resolved);
+                if (tap_emitted) {
+                    data->one_finger_hold_button = resolved;
+                }
             } else if (IS_ENABLED(CONFIG_INPUT_IQS9151_1F_TAP_ENABLE)) {
-                tap_emitted = iqs9151_emit_click(data, dev, INPUT_BTN_0);
+                tap_emitted = iqs9151_emit_click(data, dev, resolved);
             } else {
                 tap_emitted = true;
             }
         }
     }
+    data->tap_anchor_valid = false;
 
     if (tap_detected &&
         tap_emitted &&
@@ -1936,8 +1984,10 @@ static void iqs9151_one_finger_click_work_cb(struct k_work *work) {
         return;
     }
 
+    const uint16_t expected = data->one_finger_hold_button;
+
     iqs9151_clear_one_finger_click_pending(data);
-    if (data->hold_button == INPUT_BTN_0) {
+    if (expected != 0U && data->hold_button == expected) {
         iqs9151_release_hold(data, data->dev);
     }
 }
@@ -2015,7 +2065,8 @@ static bool iqs9151_update_gesture_sessions(struct iqs9151_data *data,
     bool released_from_hold = false;
 
     if (frame->finger_count > 1U && data->one_finger_click_pending) {
-        if (data->hold_button == INPUT_BTN_0) {
+        if (data->one_finger_hold_button != 0U &&
+            data->hold_button == data->one_finger_hold_button) {
             iqs9151_release_hold(data, dev);
             released_from_hold = true;
         }
@@ -2838,15 +2889,47 @@ void iqs9151_test_force_pinch_session(void *ctx, bool active) {
 }
 #endif
 
-#define IQS9151_INIT(inst)                                                \
-    static const struct iqs9151_config iqs9151_config_##inst = {    \
-        .i2c = I2C_DT_SPEC_INST_GET(inst),                                      \
-        .irq_gpio = GPIO_DT_SPEC_INST_GET(inst, irq_gpios),                     \
-  };                                                                          \
-  static struct iqs9151_data iqs9151_data_##inst;                 \
-  DEVICE_DT_INST_DEFINE(inst, iqs9151_init, NULL,                       \
-                        &iqs9151_data_##inst,                           \
-                        &iqs9151_config_##inst, POST_KERNEL,            \
-                        CONFIG_INPUT_IQS9151_INIT_PRIORITY, NULL);
+#define IQS9151_TAP_ZONE_ENTRY(node_id)                                       \
+    {                                                                         \
+        .x_min       = (uint16_t)DT_PROP_BY_IDX(node_id, x_range, 0),         \
+        .x_max       = (uint16_t)DT_PROP_BY_IDX(node_id, x_range, 1),         \
+        .y_min       = (uint16_t)DT_PROP_BY_IDX(node_id, y_range, 0),         \
+        .y_max       = (uint16_t)DT_PROP_BY_IDX(node_id, y_range, 1),         \
+        .button_code = (uint16_t)DT_PROP(node_id, button_code),               \
+    },
+
+#define IQS9151_TAP_ZONES_NODE(inst) DT_INST_CHILD(inst, tap_zones)
+#define IQS9151_TAP_ZONES_PRESENT(inst) DT_NODE_HAS_STATUS(IQS9151_TAP_ZONES_NODE(inst), okay)
+
+#define IQS9151_TAP_ZONES_DEFINE(inst)                                        \
+    COND_CODE_1(IQS9151_TAP_ZONES_PRESENT(inst),                              \
+        (static const struct iqs9151_tap_zone iqs9151_tap_zones_##inst[] = {  \
+            DT_FOREACH_CHILD_STATUS_OKAY(IQS9151_TAP_ZONES_NODE(inst),        \
+                                         IQS9151_TAP_ZONE_ENTRY)              \
+        };),                                                                  \
+        ())
+
+#define IQS9151_TAP_ZONES_PTR(inst)                                           \
+    COND_CODE_1(IQS9151_TAP_ZONES_PRESENT(inst),                              \
+                (iqs9151_tap_zones_##inst), (NULL))
+
+#define IQS9151_TAP_ZONE_COUNT(inst)                                          \
+    COND_CODE_1(IQS9151_TAP_ZONES_PRESENT(inst),                              \
+                (ARRAY_SIZE(iqs9151_tap_zones_##inst)), (0))
+
+#define IQS9151_INIT(inst)                                                    \
+    IQS9151_TAP_ZONES_DEFINE(inst)                                            \
+    static const struct iqs9151_config iqs9151_config_##inst = {              \
+        .i2c = I2C_DT_SPEC_INST_GET(inst),                                    \
+        .irq_gpio = GPIO_DT_SPEC_INST_GET(inst, irq_gpios),                   \
+    };                                                                        \
+    static struct iqs9151_data iqs9151_data_##inst = {                        \
+        .tap_zones = IQS9151_TAP_ZONES_PTR(inst),                             \
+        .tap_zone_count = IQS9151_TAP_ZONE_COUNT(inst),                       \
+    };                                                                        \
+    DEVICE_DT_INST_DEFINE(inst, iqs9151_init, NULL,                           \
+                          &iqs9151_data_##inst,                               \
+                          &iqs9151_config_##inst, POST_KERNEL,                \
+                          CONFIG_INPUT_IQS9151_INIT_PRIORITY, NULL);
 
 DT_INST_FOREACH_STATUS_OKAY(IQS9151_INIT);

@@ -1,0 +1,64 @@
+description: |
+  Per-zone 1-finger tap button mapping for the Azoteq IQS9151 trackpad.
+
+  This binding declares a container node ("tap_zones") under an
+  azoteq,iqs9151 device. Each child node of the container defines a
+  rectangular touch area in absolute trackpad coordinates and the
+  Linux input button code to emit when a 1-finger tap lands inside it.
+
+  The first matching zone wins (zones are evaluated in devicetree
+  order). If no zone matches, or the container is absent, a 1-finger
+  tap continues to emit INPUT_BTN_0 as before.
+
+  Only single-finger single-tap is mapped. 1F double-tap, 1F TapDrag,
+  and 2F/3F gestures are unaffected.
+
+  Example:
+
+    &iqs9151 {
+        tap_zones {
+            compatible = "azoteq,iqs9151-tap-zones";
+
+            bottom_left {
+                x-range = <0 2047>;
+                y-range = <2730 4095>;
+                button-code = <INPUT_BTN_8>;
+            };
+
+            bottom_right {
+                x-range = <2048 4095>;
+                y-range = <2730 4095>;
+                button-code = <INPUT_BTN_9>;
+            };
+        };
+    };
+
+compatible: "azoteq,iqs9151-tap-zones"
+
+child-binding:
+  description: |
+    A single rectangular tap zone. Coordinates are 12-bit absolute
+    trackpad counts (0-4095). x-range and y-range are inclusive.
+    Verify the Y-axis direction on your hardware (Y=0 may be top or
+    bottom depending on rotation).
+
+  properties:
+    x-range:
+      type: array
+      required: true
+      description: |
+        Inclusive X coordinate range as <x-min x-max>, both 0-4095.
+
+    y-range:
+      type: array
+      required: true
+      description: |
+        Inclusive Y coordinate range as <y-min y-max>, both 0-4095.
+
+    button-code:
+      type: int
+      required: true
+      description: |
+        Linux input button code (INPUT_BTN_*) emitted on tap inside
+        this zone. To avoid clashing with codes already used by the
+        IQS9151 driver (BTN_0..BTN_7), prefer BTN_8 and above.

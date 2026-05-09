@@ -123,6 +123,17 @@ config INPUT_IQS9151_1F_TAP_MOVE
     help
       Maximum accumulated movement for 1F tap detection (driver-side).
 
+config INPUT_IQS9151_TAP_ZONES
+    bool "IQS9151 per-zone 1F tap button mapping"
+    default y if DT_HAS_AZOTEQ_IQS9151_TAP_ZONES_ENABLED
+    help
+      Allow mapping 1-finger tap events to different INPUT_BTN_*
+      codes based on the initial finger landing coordinate, configured
+      via a "tap_zones" devicetree child of the iqs9151 node using
+      compatible "azoteq,iqs9151-tap-zones". When no tap_zones node
+      is present, behavior is identical to the legacy code path
+      (1F tap always emits INPUT_BTN_0).
+
 config INPUT_IQS9151_1F_PRESSHOLD_ENABLE
     bool "IQS9151 single-finger press/hold enable"
     default y

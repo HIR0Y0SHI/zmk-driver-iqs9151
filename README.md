@@ -122,6 +122,68 @@ CONFIG_INPUT_IQS9151=y
 ※更なる動作をキーマップから設定できるようにするにはコンフィグ及びDTSの設定が必要です。  
   
   
+## 1本指タップのコーナー割り当て（タップゾーン）
+
+1本指シングルタップが着地した座標に応じて、異なる `INPUT_BTN_*` を発火できる機能です。  
+BetterTouchTool の "Corner Tap" のような UX を ZMK キーマップ側で組み立てるための土台になります。
+
+- 対象ジェスチャ: **1本指シングルタップのみ**。1F double tap / 1F TapDrag / 2F・3F 系には影響しません。
+- ゾーン未定義時は従来動作（タップは常に `INPUT_BTN_0`）と完全互換です。
+- ゾーン重複時は devicetree 上で先に書かれたゾーンが優先されます（first-match）。
+- 判定座標はタップ着地時の `finger1_x` / `finger1_y` を使うため、保持中の微小ドリフトでゾーンは切り替わりません。
+
+### 設定例（DTS overlay）
+
+```dts
+#include <dt-bindings/input/input-event-codes.h>
+
+&iqs9151 {
+    tap_zones {
+        compatible = "azoteq,iqs9151-tap-zones";
+
+        bottom_left {
+            /* 12bit 絶対座標（0-4095）。両端 inclusive。 */
+            x-range = <0 2047>;
+            y-range = <2730 4095>;     /* 下から約 1/3 */
+            button-code = <INPUT_BTN_8>;
+        };
+
+        bottom_right {
+            x-range = <2048 4095>;
+            y-range = <2730 4095>;
+            button-code = <INPUT_BTN_9>;
+        };
+    };
+};
+```
+
+> [!IMPORTANT]
+> - 子ノード名は `tap_zones` に固定してください（`DT_INST_CHILD(inst, tap_zones)` で参照しています）。
+> - 各ゾーン子ノードの名前（`bottom_left` 等）は任意です。
+> - `Y` 軸の向き（`Y=0` が上端か下端か）はトラックパッドの取付向きと回転設定に依存します。実機で `evtest` 等を使って確認してください。
+> - 解像度: X / Y とも 12bit（0-4095）。デフォルト Kconfig は X=2457 / Y=3072 ですが、ハード上のフルスケールは 4095 まで利用できます。
+
+### 既存ボタンコードとの衝突に注意
+
+スプリット構成（例: LalaPadGen2）で既に `INPUT_BTN_0` 〜 `INPUT_BTN_7` を以下のようにドライバ内部で利用しています。タップゾーンの `button-code` には **`INPUT_BTN_8` 以降** を割り当てるのを推奨します。
+
+| Button code     | 既存用途                                  |
+| --------------- | ----------------------------------------- |
+| `INPUT_BTN_0`   | 1F タップ（左クリック相当）               |
+| `INPUT_BTN_1`   | 2F タップ                                 |
+| `INPUT_BTN_2`   | 3F タップ                                 |
+| `INPUT_BTN_3/4` | 3F (および 2F) 横スワイプ                 |
+| `INPUT_BTN_5/6` | 3F 縦スワイプ                             |
+| `INPUT_BTN_7`   | ピンチ系                                  |
+
+### キーマップ側での使い方
+
+タップゾーンが発火する `INPUT_BTN_*` を、キーマップ側（LalaPadGen2 等）の `&tp_to_pos` などの仕組みで任意のキーストロークに紐づけます。例えば、左下タップで `LG(LA(LEFT))`（macOS の Option+Cmd+Left）、右下タップで `LG(LA(RIGHT))`（Option+Cmd+Right）に割り当てる構成は、キーマップ側で `INPUT_BTN_8` / `INPUT_BTN_9` を該当の position / behavior にバインドして実現します。ドライバ側の役割は座標→ボタンコード変換までです。
+
+### 関連 Kconfig
+
+- `CONFIG_INPUT_IQS9151_TAP_ZONES`: 既定値は DT 上にゾーンノードがあれば `y`（`default y if DT_HAS_AZOTEQ_IQS9151_TAP_ZONES_ENABLED`）。明示的に無効化したい場合のみ `n` を指定してください。
+
 ## 応用編（ドキュメント整備中...）
 
 - ZMKキーマップと連携しKeymap EditorやZMK Studioからトラックパッドの動作を変更する
